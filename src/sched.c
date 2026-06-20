@@ -1,6 +1,7 @@
 #include "headers/sched.skel.h"
 #include <signal.h>
 #include <stdio.h>
+#include <unistd.h>
 
 static volatile sig_atomic_t exiting = 0;
 
@@ -29,7 +30,12 @@ int main(void) {
     fprintf(stderr, "failed to attach BPF skeleton\n");
     goto cleanup;
   }
+  while (!exiting) {
+    sleep(1);
+    // analysis here
+  }
 cleanup:
+  printf("\nDetaching and cleaning up scheduler...\n");
   sched_bpf__destroy(skel);
   return err < 0 ? -err : 0;
 }

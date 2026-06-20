@@ -1,10 +1,9 @@
+#include "algos/fcfs.c"
+#include "headers/enums.h"
 #include "headers/vmlinux.h"
 #include <bpf/bpf_helpers.h>
 
-#define DSQ_FCFS 1
 #define DSQ_RR 2
-
-enum policy { POLICY_FCFS, POLICY_RR, POLICY_PRIORITY, POLICY_MLFQ };
 
 static u64 vtime_now;
 static volatile u32 active_policy_g = POLICY_MLFQ;
@@ -14,6 +13,8 @@ void adaptive_enqueue(struct task_struct *p, u64 flags) {
   // TODO: write enque functions
   switch (active_policy_g) {
   case POLICY_FCFS:
+    fcfs_enqueue(p, flags);
+    break;
   case POLICY_RR:
   case POLICY_PRIORITY:
   default:
@@ -25,6 +26,9 @@ void adaptive_enqueue(struct task_struct *p, u64 flags) {
 
 SEC("struct_ops/select_cpu")
 s32 select_cpu(struct task_struct *p, s32 prev_cpu, u64 wake_flags) {
+  /*
+  Select the last (hot) cpu if idle else ask kernel to provide an cpu
+  */
   if (scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
     scx_bpf_dsq_insert(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0);
     return prev_cpu;
@@ -43,19 +47,54 @@ s32 select_cpu(struct task_struct *p, s32 prev_cpu, u64 wake_flags) {
 SEC("struct_ops.s/adaptive_init")
 s32 adaptive_init(void) {
   s32 err;
-  err = scx_bpf_create_dsq(DSQ_FCFS, -1);
+  err = fcfs_init();
   if (err)
     return err;
   return scx_bpf_create_dsq(DSQ_RR, -1);
 }
 
 SEC("struct_ops/adaptive_exit")
-void adaptive_exit(struct scx_exit_info *ei) {}
+void adaptive_exit(struct scx_exit_info *ei) {
+  /*
+  dsq are auto removed and function can be used for logging
+  (hence empty for now)
+  */
+}
+
+u64 get_current_policy_dsq() {
+  switch (active_policy_g) {
+  case POLICY_FCFS:
+    return DSQ_FCFS;
+  default:
+    return DSQ_RR;
+    // case POLICY_RR:
+    // case POLICY_PRIORITY:
+    // default:
+    // mlqfs should be here
+    break;
+  }
+}
+
+SEC("struct_ops/adaptive_dispatch")
+void adaptive_dispatch(s32 cpu, struct task_struct *prev_task) {
+  switch (active_policy_g) {
+  case POLICY_FCFS:
+    fcfs_dispatch(cpu, prev_task);
+    break;
+  case POLICY_RR:
+  case POLICY_PRIORITY:
+  default:
+    // Fallback or MLFQ/RR dispatch logic here
+    scx_bpf_dsq_move_to_local(DSQ_RR);
+    break;
+  }
+}
 
 SEC(".struct_ops.link")
 struct sched_ext_ops sched_ops = {
     .select_cpu = (void *)select_cpu,
     .enqueue = (void *)adaptive_enqueue,
+    .dispatch = (void *)adaptive_dispatch,
     .init = (void *)adaptive_init,
     .exit = (void *)adaptive_exit,
     .name = "sched",

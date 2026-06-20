@@ -3,7 +3,7 @@ CC         := gcc
 BPFTOOL    := bpftool
 BPF_CFLAGS := -g -O2 -target bpf -Wall -D__x86_64__ -Isrc
 
-CFLAGS     := -Wall -O2 -Ibuild -I. -I ./src/include
+CFLAGS     := -Wall -O2 -Ibuild -I. -I ./src/headers
 LDFLAGS    := -lbpf -lelf -lz
 
 APP        := sched
